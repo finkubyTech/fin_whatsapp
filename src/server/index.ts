@@ -51,6 +51,11 @@ app.prepare().then(() => {
   });
 
   const allowedOrigin = process.env.BASE_URL || `http://${hostname}:${port}`;
+  const customCorsOrigins = (process.env.CORS_ORIGIN || "")
+    .split(",")
+    .map(o => o.trim())
+    .filter(Boolean);
+
   const io = new Server(server, {
     path: "/api/socket/io",
     addTrailingSlash: false,
@@ -59,9 +64,10 @@ app.prepare().then(() => {
         if (
           !origin ||
           origin === allowedOrigin ||
+          origin === process.env.NEXTAUTH_URL ||
           origin.startsWith("http://localhost:") ||
           origin.startsWith("http://127.0.0.1:") ||
-          origin === process.env.NEXTAUTH_URL
+          customCorsOrigins.includes(origin)
         ) {
           callback(null, true);
         } else {
