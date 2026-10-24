@@ -1,0 +1,206 @@
+import { prisma } from "@/lib/prisma";
+import type { WASocket } from "@whiskeysockets/baileys";
+import { normalizeMessageContent } from "@whiskeysockets/baileys";
+import { logger } from "@/lib/logger";
+import { OPT_OUT_PATTERN, logOptOut } from "./optout-log";
+
+// Helper for permission check (Deduplicate from command-handler if possible, but keep simple here)
+export function canAutoReply(config: any, fromMe: boolean, senderJid: string): boolean {
+    if (!config || !config.enabled) return false;
+
+    // Auto Reply Specific Mode
+    const mode = config.autoReplyMode || 'ALL';
+
+    if (fromMe) {
+        // If mode is OWNER, it triggers for ME? 
+        // Auto Reply usually replies TO someone. 
+        // If I send a message, and mode is OWNER, should it reply to me? 
+        // User requested "Self Mode" -> Use case: Snippets.
+        // So yes, if fromMe checks out.
+
+        // However, standard auto-reply logic (replying to incoming) should be blocked if fromMe is true AND mode is ALL?
+        // No, typically Auto Reply doesn't trigger on own messages to prevent unexpected loops.
+        // But for "Self Mode" (Macros), it MUST trigger on own messages.
+
+        if (mode === 'OWNER') return true;
+        if (mode === 'ALL') return false; // Standard auto-reply ignores self
+
+        // Specific? 
+        return false;
+    } else {
+        // Incoming message from others
+        if (mode === 'OWNER') return false; // Owner only acts on Owner messages
+        if (mode === 'ALL') return true;
+
+        if (mode === 'SPECIFIC') {
+            const allowedJids = config.autoReplyAllowedJids || [];
+            if (Array.isArray(allowedJids)) {
+                return allowedJids.some((jid: string) => senderJid.includes(jid));
+            }
+        }
+
+        if (mode === 'BLACKLIST') {
+            const blockedJids = config.autoReplyBlockedJids || [];
+            if (Array.isArray(blockedJids)) {
+                const isBlocked = blockedJids.some((jid: string) => senderJid.includes(jid));
+                return !isBlocked; // Return true if NOT blocked
+            }
+            return true; // If blacklist empty, allow all
+        }
+    }
+
+    return false;
+}
+
+// The text auto-reply rules are matched against: plain text only, no captions.
+export function autoReplyText(message: any): string {
+    const content = normalizeMessageContent(message);
+    return content?.conversation || content?.extendedTextMessage?.text || "";
+}
+
+export function ruleMatches(rule: { keyword: string; matchType: string; triggerType?: string | null }, text: string, isGroup: boolean): boolean {
+    const triggerType = rule.triggerType || 'ALL'; // Default to ALL if undefined
+    if (triggerType === 'GROUP' && !isGroup) return false;
+    if (triggerType === 'PRIVATE' && isGroup) return false;
+
+    const keyword = rule.keyword.toLowerCase();
+    const incoming = text.toLowerCase();
+
+    switch (rule.matchType) {
+        case 'EXACT':
+            return incoming === keyword;
+        case 'CONTAINS':
+            return incoming.includes(keyword);
+        case 'REGEX':
+            try {
+                return new RegExp(rule.keyword, 'i').test(text); // Use original case for regex
+            } catch (e) {
+                logger.error("AutoReply", "Invalid regex in auto-reply", rule.keyword);
+            }
+    }
+    return false;
+}
+
+// Finkuby: the rule bindAutoReply answers a message with (the first match), so the welcome message can avoid
+// sending the same text a second time.
+export async function findReplyRule(sessionId: string, text: string, isGroup: boolean) {
+    if (!text) return null;
+    const rules = await prisma.autoReply.findMany({ where: { session: { sessionId } } });
+    return rules.find((rule) => ruleMatches(rule as any, text, isGroup)) || null;
+}
+
+export async function bindAutoReply(sock: WASocket, sessionId: string) {
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+
+        // Fetch session ID and Bot Config once per batch (optimization)
+        const session = await prisma.session.findUnique({
+            where: { sessionId },
+            // @ts-ignore
+            include: { botConfig: true }
+        });
+
+        if (!session) return;
+
+        // @ts-ignore
+        let config = (session as any).botConfig;
+
+        if (!config) {
+            logger.warn("AutoReply", "No config found, creating default...");
+            config = await prisma.botConfig.create({
+                data: {
+                    sessionId: session.id,
+                    enabled: true,
+                    botMode: 'OWNER',
+                    autoReplyMode: 'ALL'
+                }
+            });
+        }
+
+        logger.debug("AutoReply", `Processing for ${sessionId}. Config: ${config ? "Found" : "Missing"}, ${config?.enabled ? "Enabled" : "Disabled"}`);
+
+        if (!config || !config.enabled) return;
+
+        for (const msg of messages) {
+            const fromMe = msg.key.fromMe || false;
+            const remoteJid = msg.key.remoteJid;
+
+            // Standardized Sender Logic
+            const isGroup = remoteJid?.endsWith("@g.us") || false;
+            const remoteJidAlt = msg.key.remoteJidAlt;
+            let senderJid = (isGroup ? (msg.key.participant || msg.participant) : remoteJid);
+
+            if (!isGroup && remoteJidAlt) {
+                senderJid = remoteJidAlt;
+            }
+
+            if (!remoteJid || !senderJid) continue;
+
+            // Check Permissions
+            if (!canAutoReply(config, fromMe, senderJid)) continue;
+
+            const text = autoReplyText(msg.message); // Caption?
+
+            if (!text) continue;
+
+            if (!fromMe && !isGroup && OPT_OUT_PATTERN.test(text)) {
+                await logOptOut(sessionId, remoteJid, senderJid, text, msg.pushName);
+            }
+
+            try {
+                // Fetch rules for this session
+                const rules = await prisma.autoReply.findMany({
+                    where: {
+                        session: {
+                            sessionId: sessionId
+                        }
+                    }
+                });
+
+                for (const rule of rules) {
+                    if (ruleMatches(rule as any, text, remoteJid.endsWith('@g.us'))) {
+                        logger.info("AutoReply", `Match: ${rule.keyword} -> ${remoteJid}`);
+
+                        if (rule.isMedia && rule.mediaUrl) {
+                            const url = rule.mediaUrl;
+                            const type = (rule as any).mediaType || "document";
+                            
+                            let payload: any = {};
+                            if (rule.response) {
+                                payload.caption = rule.response;
+                            }
+
+                            if (type === "image") {
+                                payload.image = { url };
+                            } else if (type === "video") {
+                                payload.video = { url };
+                            } else if (type === "audio") {
+                                payload = { audio: { url } };
+                            } else {
+                                payload.document = { url };
+                                payload.mimetype = 'application/octet-stream';
+                                payload.fileName = url.split('/').pop() || 'document';
+                            }
+                            
+                            try {
+                                await sock.sendMessage(remoteJid, payload, { quoted: msg });
+                            } catch (err: any) {
+                                logger.error("AutoReply", `Failed to send media auto-reply from URL: ${err.message}. Falling back to text if response exists.`);
+                                if (rule.response) {
+                                    await sock.sendMessage(remoteJid, { text: rule.response }, { quoted: msg });
+                                }
+                            }
+                        } else if (rule.response) {
+                            await sock.sendMessage(remoteJid, { text: rule.response }, { quoted: msg });
+                        }
+
+                        break;
+                    }
+                }
+
+            } catch (e) {
+                logger.error("AutoReply", "Error executing auto-reply", e);
+            }
+        }
+    });
+}
