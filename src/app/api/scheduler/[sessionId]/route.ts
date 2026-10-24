@@ -76,6 +76,17 @@ export async function POST(
             return NextResponse.json({ status: false, message: "Missing required fields (JID, Content/Media, SendAt)", error: "Missing required fields" }, { status: 400 });
         }
 
+        if (mediaUrl) {
+            const { validateSafeUrl } = await import("@/lib/security");
+            const urlValidation = await validateSafeUrl(mediaUrl);
+            if (!urlValidation.valid) {
+                return NextResponse.json(
+                    { status: false, message: `Invalid media URL: ${urlValidation.error}`, error: urlValidation.error },
+                    { status: 400 }
+                );
+            }
+        }
+
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) {
             return NextResponse.json({ status: false, message: "Forbidden - Cannot access this session", error: "Forbidden - Cannot access this session" }, { status: 403 });
@@ -93,7 +104,7 @@ export async function POST(
         // Fetch system timezone
         // @ts-ignore
         const systemConfig = await prisma.systemConfig.findUnique({ where: { id: "default" } });
-        const timezone = systemConfig?.timezone || "Asia/Jakarta";
+        const timezone = systemConfig?.timezone || "Asia/Kolkata";
 
         console.log(`[Scheduler:POST] Received sendAt: ${sendAt}, using timezone: ${timezone}`);
         const utcDate = moment.tz(sendAt, timezone).toDate();

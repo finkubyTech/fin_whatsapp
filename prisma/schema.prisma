@@ -40,7 +40,7 @@ model User {
   name      String?
   email     String   @unique
   password  String
-  role      Role     @default(OWNER)
+  role      Role     @default(STAFF)
   apiKey    String?  @unique // API Key for authentication
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -294,8 +294,8 @@ model SystemConfig {
   appName            String   @default("WA-AKG")
   logoUrl            String?
   faviconUrl         String?
-  timezone           String   @default("Asia/Jakarta")
-  enableRegistration Boolean  @default(true)
+  timezone           String   @default("Asia/Kolkata")
+  enableRegistration Boolean  @default(false)
   
   updatedAt          DateTime @updatedAt
 }

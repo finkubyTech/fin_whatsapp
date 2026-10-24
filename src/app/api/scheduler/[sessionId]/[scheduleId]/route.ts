@@ -26,10 +26,21 @@ export async function PUT(
             return NextResponse.json({ status: false, message: "Missing required fields (JID, Content/Media, SendAt)", error: "Missing required fields" }, { status: 400 });
         }
 
+        if (mediaUrl) {
+            const { validateSafeUrl } = await import("@/lib/security");
+            const urlValidation = await validateSafeUrl(mediaUrl);
+            if (!urlValidation.valid) {
+                return NextResponse.json(
+                    { status: false, message: `Invalid media URL: ${urlValidation.error}`, error: urlValidation.error },
+                    { status: 400 }
+                );
+            }
+        }
+
         // Fetch system timezone
         // @ts-ignore
         const systemConfig = await prisma.systemConfig.findUnique({ where: { id: "default" } });
-        const timezone = systemConfig?.timezone || "Asia/Jakarta";
+        const timezone = systemConfig?.timezone || "Asia/Kolkata";
 
         console.log(`[Scheduler:PUT] Received sendAt: ${sendAt}, using timezone: ${timezone}`);
         const utcDate = moment.tz(sendAt, timezone).toDate();

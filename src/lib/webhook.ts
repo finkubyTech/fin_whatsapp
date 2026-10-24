@@ -156,10 +156,17 @@ async function sendWebhookRequest(url: string, payload: WebhookPayload, secret?:
     let errorMessage: string | undefined;
 
     try {
+        const { validateSafeUrl } = await import("./security");
+        const safeCheck = await validateSafeUrl(url, { allowHttp: false });
+        if (!safeCheck.valid) {
+            throw new Error(`SSRF Blocked: ${safeCheck.error}`);
+        }
+
         response = await fetch(url, {
             method: "POST",
             headers,
             body,
+            redirect: "manual",
             signal: AbortSignal.timeout(10000) // 10 second timeout
         });
 
@@ -298,20 +305,25 @@ export async function testWebhook(webhookId: string, url: string, secret?: strin
     }
 
     try {
+        const { validateSafeUrl } = await import("./security");
+        const safeCheck = await validateSafeUrl(url, { allowHttp: false });
+        if (!safeCheck.valid) {
+            throw new Error(`SSRF Blocked: ${safeCheck.error}`);
+        }
+
         const response = await fetch(url, {
             method: "POST",
             headers,
             body,
+            redirect: "manual",
             signal: AbortSignal.timeout(15000)
         });
 
         const responseTimeMs = Date.now() - startedAt;
-        let responseBody = await response.text().catch(() => undefined);
-        if (responseBody && responseBody.length > 1024) {
-            responseBody = responseBody.substring(0, 1024);
-        }
+        const responseSize = Number(response.headers.get("content-length")) || 0;
+        const safeSummary = `HTTP ${response.status} ${response.statusText}${responseSize ? ` (${responseSize} bytes)` : ""}`;
 
-        // Record test log
+        // Record test log — safely store status without persisting sensitive response bodies
         await recordWebhookLog({
             webhookId,
             event: "test",
@@ -320,7 +332,7 @@ export async function testWebhook(webhookId: string, url: string, secret?: strin
             requestHeaders: headers,
             requestBody: testPayload,
             responseStatusCode: response.status,
-            responseBody: responseBody || null,
+            responseBody: safeSummary,
             responseTimeMs,
             errorMessage: response.ok ? null : `Webhook returned ${response.status}: ${response.statusText}`
         });
@@ -329,7 +341,6 @@ export async function testWebhook(webhookId: string, url: string, secret?: strin
             return {
                 success: false,
                 statusCode: response.status,
-                responseBody,
                 responseTimeMs,
                 error: `Returned ${response.status}: ${response.statusText}`
             };
@@ -338,7 +349,6 @@ export async function testWebhook(webhookId: string, url: string, secret?: strin
         return {
             success: true,
             statusCode: response.status,
-            responseBody,
             responseTimeMs
         };
     } catch (err: any) {
@@ -390,8 +400,9 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
         let buffer: Buffer | null = null;
         const mediaObj = (messageContent as any)[messageType];
 
-        // Newsletter media is NOT encrypted — no mediaKey present
-        const isNewsletterMedia = !mediaObj.mediaKey && (mediaObj.directPath || mediaObj.thumbnailDirectPath);
+        // Newsletter media is NOT encrypted — strictly restricted to real @newsletter JIDs
+        const isNewsletterJid = message.key.remoteJid?.endsWith("@newsletter");
+        const isNewsletterMedia = Boolean(isNewsletterJid && !mediaObj.mediaKey && (mediaObj.directPath || mediaObj.thumbnailDirectPath));
 
         if (isNewsletterMedia) {
             logger.info("Media", "Downloading unencrypted media (newsletter) via direct fetch...");
@@ -400,20 +411,17 @@ export async function downloadAndSaveMedia(message: WAMessage, sessionId: string
             const downloadUrl = dp.startsWith('http') ? dp : `https://mmg.whatsapp.net${dp}`;
 
             try {
-                const res = await fetch(downloadUrl, {
-                    method: 'GET',
-                    headers: { 'Origin': 'https://web.whatsapp.com' }
+                const { safeFetchBuffer } = await import("./security");
+                const { buffer: fetchedBuf } = await safeFetchBuffer(downloadUrl, {
+                    allowedHostnames: ["whatsapp.net", "fbcdn.net"],
+                    maxBytes: 50 * 1024 * 1024, // 50MB max
+                    timeoutMs: 15000
                 });
 
-                if (!res.ok) {
-                    logger.error("Media", `Newsletter media HTTP ${res.status} ${res.statusText} for URL: ${downloadUrl}`);
-                    return null;
-                }
-
-                buffer = Buffer.from(await res.arrayBuffer());
+                buffer = fetchedBuf;
                 logger.success("Media", `Newsletter media downloaded: ${buffer.length} bytes`);
-            } catch (e) {
-                logger.error("Media", "Failed to download newsletter media:", e);
+            } catch (e: any) {
+                logger.error("Media", `Failed to download newsletter media: ${e.message}`);
                 return null;
             }
         } else {

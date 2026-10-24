@@ -54,9 +54,9 @@ function formatTime(ts: string, tz: string) {
     const d = new Date(ts);
     if (isNaN(d.getTime())) return ts || "";
     try {
-        return d.toLocaleString("id-ID", { timeZone: tz });
+        return d.toLocaleString("en-IN", { timeZone: tz });
     } catch {
-        return d.toLocaleString("id-ID");
+        return d.toLocaleString("en-IN");
     }
 }
 
@@ -65,9 +65,9 @@ function formatTimeOnly(ts: string, tz: string) {
     const d = new Date(ts);
     if (isNaN(d.getTime())) return "";
     try {
-        return d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: tz });
+        return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: tz });
     } catch {
-        return d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     }
 }
 
@@ -87,7 +87,7 @@ export default function WebhookLogDialog({ webhookId, webhookName, targetSession
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<"payload" | "response" | "headers">("payload");
     const [showMobileDetails, setShowMobileDetails] = useState(false);
-    const [timezone, setTimezone] = useState<string>("Asia/Jakarta");
+    const [timezone, setTimezone] = useState<string>("Asia/Kolkata");
 
     // Reset log selection and fetch timezone when dialog changes state
     useEffect(() => {
