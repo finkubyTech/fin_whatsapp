@@ -53,7 +53,7 @@ export default function SchedulerPage() {
     const [messages, setMessages] = useState<ScheduledMessage[]>([]);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
-    const [systemTimezone, setSystemTimezone] = useState("Asia/Jakarta");
+    const [systemTimezone, setSystemTimezone] = useState("Asia/Kolkata");
     const [activeTab, setActiveTab] = useState("pending");
 
     // Form state

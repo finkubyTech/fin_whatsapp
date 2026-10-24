@@ -338,7 +338,7 @@ export default function WebhooksPage() {
     // Format timestamp
     const formatTime = (ts: string) => {
         const d = new Date(ts);
-        return d.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
+        return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
     };
 
     return (

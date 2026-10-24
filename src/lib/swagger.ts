@@ -4163,7 +4163,7 @@ All endpoints require authentication via:
                                                 id: { type: "string", example: "default" },
                                                 appName: { type: "string", example: "WA-AKG" },
                                                 logoUrl: { type: "string", example: "https://example.com/logo.png" },
-                                                timezone: { type: "string", example: "Asia/Jakarta" }
+                                                timezone: { type: "string", example: "Asia/Kolkata" }
                                             }
                                         }
                                     }

@@ -100,8 +100,9 @@ app.prepare().then(() => {
 
     // --- WA-AKG Monitor Heartbeat ---
     // Sends a ping every 30 seconds to the monitoring server
-    // Telemetry opt-out is supported via ENABLE_TELEMETRY="false" or DISABLE_TELEMETRY="true"
-    const isTelemetryEnabled = process.env.ENABLE_TELEMETRY !== "false" && process.env.DISABLE_TELEMETRY !== "true";
+    // Finkuby: opt-in only. It posts BASE_URL and host details to a third-party server every 30s, so it stays off
+    // unless ENABLE_TELEMETRY is exactly "true" (upstream sends it unless switched off).
+    const isTelemetryEnabled = process.env.ENABLE_TELEMETRY === "true" && process.env.DISABLE_TELEMETRY !== "true";
 
     if (isTelemetryEnabled) {
       const MONITOR_URL = "https://api-wa-akg.aikeigroup.net/api/ping";
