@@ -1,0 +1,8 @@
+{
+  // Editor only: the main tsconfig.json leaves tests out of the build, so VS Code checks them here, with Jest's types.
+  // The build, Docker and `npm test` (ts-jest) keep using ../tsconfig.json.
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "types": ["jest", "node"], "noEmit": true },
+  "include": ["./**/*.ts", "../src/**/*", "../config/**/*"],
+  "exclude": []
+}

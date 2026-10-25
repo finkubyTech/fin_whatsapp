@@ -1,58 +1,32 @@
-version: '3.8'
-
+# Runs fin_whatsapp on its own (staging server). For the whole platform locally,
+# use the fin_platform root docker-compose.yml instead.
+#
+#   docker network create fin-network   # once per host
+#   docker compose up -d --build
 services:
-  db:
-    image: postgres:16
-    container_name: wa-akg-db
-    restart: always
+  fin_whatsapp:
+    build: .
+    image: fin_whatsapp
+    container_name: fin_whatsapp
+    env_file: .env
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-wa_akg}
+      PORT: 5109
     ports:
-      - "5432:5432"
+      - "5109:5109"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-wa_akg}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: wa-akg-app
-    restart: always
-    ports:
-      - "3000:3000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-wa_akg}?schema=public
-      - AUTH_SECRET=${AUTH_SECRET}
-      - BASE_URL=${BASE_URL:-http://localhost:3000}
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
-      - NODE_ENV=production
-      - PORT=${PORT:-3000}
-      - HOSTNAME=0.0.0.0
-      - NEXT_PUBLIC_APP_URL=${BASE_URL:-http://localhost:3000}
-      - NEXT_PUBLIC_API_URL=${BASE_URL:-http://localhost:3000}/api
-      - BAILEYS_LOG_LEVEL=${BAILEYS_LOG_LEVEL:-error}
-      - NEXT_PUBLIC_SWAGGER_USERNAME=${NEXT_PUBLIC_SWAGGER_USERNAME:-admin}
-      - NEXT_PUBLIC_SWAGGER_PASSWORD=${NEXT_PUBLIC_SWAGGER_PASSWORD}
-      - NEXT_PUBLIC_SWAGGER_ENABLED=${NEXT_PUBLIC_SWAGGER_ENABLED:-true}
-      - TZ=${TZ:-Asia/Jakarta}
-      - LOCALE=${LOCALE:-id-ID}
-      - ADMIN_EMAIL=${ADMIN_EMAIL}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - app_data:/app/data
-      - uploads_data:/app/uploads
+      - whatsapp_media:/usr/src/app/data/media
+    restart: unless-stopped
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    networks: [fin-network]
 
 volumes:
-  postgres_data:
-  app_data:
-  uploads_data:
+  whatsapp_media:
+
+networks:
+  fin-network:
+    external: true

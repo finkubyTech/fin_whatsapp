@@ -1,0 +1,64 @@
+name: Deploy fin_whatsapp to Staging
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  test:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+  deploy:
+    name: Deploy
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull & rebuild
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          password: ${{ secrets.STAGING_SSH_PASSWORD }}
+          port:     ${{ secrets.STAGING_SSH_PORT || 22 }}
+          script: |
+            set -e
+            cd /usr/src/fin_whatsapp
+            git fetch origin staging
+            git reset --hard origin/staging
+            sudo docker network create fin-network 2>/dev/null || true
+            sudo docker compose up --build -d fin_whatsapp
+            sudo docker image prune -f
+
+      - name: Health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          password: ${{ secrets.STAGING_SSH_PASSWORD }}
+          port:     ${{ secrets.STAGING_SSH_PORT || 22 }}
+          script: |
+            cd /usr/src/fin_whatsapp
+            for i in $(seq 1 12); do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5109/api/whatsapp/health || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "fin_whatsapp healthy (attempt $i)"
+                exit 0
+              fi
+              echo "Waiting... attempt $i (status: $STATUS)"
+              sleep 5
+            done
+            echo "ERROR: fin_whatsapp did not become healthy"
+            sudo docker compose logs --tail=80 fin_whatsapp
+            exit 1
