@@ -1,38 +1,25 @@
-FROM node:26-alpine AS builder
-RUN apk add --no-cache openssl ca-certificates
-WORKDIR /app
+FROM node:24-alpine3.21
 
-# Dependency layer — cache-friendly: only rerun when package*.json changes
-COPY package*.json ./
-COPY patches ./patches/
-COPY prisma ./prisma/
-RUN npm ci --legacy-peer-deps && npm cache clean --force
+WORKDIR /usr/src/app
 
-# Source & build
-COPY . .
-RUN npx prisma generate && npm run build
+# Install from the lockfile for reproducible builds (dev deps are needed to compile).
+COPY --chown=node:node package*.json ./
+RUN npm ci --no-audit --no-fund
 
-# Strip devDeps from node_modules after build
-# tsx needed at runtime, kept explicitly
-RUN npm prune --omit=dev && npm install --no-save tsx typescript
+COPY --chown=node:node . .
+RUN npm run build && npm prune --omit=dev \
+    && mkdir -p /usr/src/app/data/media && chown -R node:node /usr/src/app
 
-# Production image
-FROM node:26-alpine AS runner
-RUN apk add --no-cache openssl ca-certificates
-WORKDIR /app
+USER node
 
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/tsconfig.json ./
-COPY --from=builder /app/scripts ./scripts
+ENV PORT=5109
+ENV WHATSAPP_MEDIA_DIR=/usr/src/app/data/media
+EXPOSE 5109
 
-ENV NODE_ENV=production
-ENV PORT=3000
-ENV HOSTNAME=0.0.0.0
-EXPOSE 3000
+# Received media lives here; mount a volume so it survives redeploys.
+VOLUME ["/usr/src/app/data/media"]
 
-CMD ["sh", "-c", "npx prisma db push && (if [ -n \"$ADMIN_EMAIL\"] && [ -n \"$ADMIN_PASSWORD\"]; then node scripts/setup-admin.js \"$ADMIN_EMAIL\" \"$ADMIN_PASSWORD\"; fi) && node node_modules/tsx/dist/cli.mjs src/server/index.ts"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:5109/api/whatsapp/health || exit 1
+
+CMD ["node", "./build/src/app.js"]

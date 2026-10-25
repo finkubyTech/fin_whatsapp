@@ -1,246 +1,142 @@
-<div align="center">
+# fin_whatsapp
 
-# 🚀 WA-AKG: The Ultimate WhatsApp Gateway & Dashboard
+Finkuby's WhatsApp gateway. Staff link company WhatsApp numbers by QR code. The CRM and other fin_ services then send and read messages through this API. Port **5109** (dev server 6109). Routes live under **`/api/whatsapp`**. The `wa_*` tables come from `fin_migrations` (`1791000000900-create_whatsapp_gateway_tables`), in the same `loan_management` database as every other service.
 
-[![WhatsApp Bot](https://img.shields.io/badge/WhatsApp-Bot-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://wa.me/)
-[![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
-[![Version](https://img.shields.io/badge/Version-1.6.2-blue?style=for-the-badge)](https://github.com/mrifqidaffaaditya/WA-AKG/releases)
-[![Main Branch](https://img.shields.io/badge/Branch-Main-green?style=for-the-badge&logo=git)](https://github.com/mrifqidaffaaditya/WA-AKG)
+It connects as a linked device (WhatsApp Web), through [Baileys](https://github.com/WhiskeySockets/Baileys). This is **not** the official WhatsApp Business API. WhatsApp can ban a number that sends bulk or unsolicited messages. The throttle, broadcast delays and opt-out list exist to keep numbers safe; keep them on.
 
-[![Active Apps](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi-wa-akg.aikeigroup.net%2Fapi%2Factive-apps&query=%24.activeCount&style=flat-square&color=25D366&logo=whatsapp&logoColor=white&label=)](https://api-wa-akg.aikeigroup.net/)
+It is a rewrite of [WA-AKG](https://github.com/mrifqidaffaaditya/WA-AKG) v1.6.4 (MIT, see `LICENSE-WA-AKG`) in the fin_ service structure. The Next.js dashboard is gone: the CRM gets WhatsApp screens instead.
 
-**A professional, multi-session WhatsApp Gateway, Dashboard, and Automation System.**  
-Built with **Next.js 15**, **React**, and **Baileys** for high-performance messaging automation and real-time WhatsApp Bot Gateway services.
+## What it does
 
-> [!TIP]
-> **Looking for the latest features?** Check out the [beta branch](https://github.com/mrifqidaffaaditya/WA-AKG/tree/beta) or our [pre-releases](https://github.com/mrifqidaffaaditya/WA-AKG/releases) for experimental sources.
+| Area | Details |
+| --- | --- |
+| Numbers | Add, start (QR or pairing code), stop, restart, log out, delete. Connected numbers reconnect when the service restarts. |
+| Messages | Text, media (upload or URL), location, contact card, reply, mention, react, delete for everyone, mark read. Incoming and outgoing messages are stored with their media. |
+| Chats | Chat list (newest first, unread counts, search, labels), message history, delete the stored copy of a chat. |
+| Contacts and groups | Contacts, check which numbers are on WhatsApp, `@lid` → phone number, block. Groups: create, edit, participants, invite links, join, leave. |
+| Automations | Welcome message for new chats, auto-reply rules (exact, contains, regex), auto-read. |
+| Opt-out | A customer who sends STOP, UNSUBSCRIBE or OPT OUT is added to the opt-out list. After that, nothing goes to them: API sends get a 409, and auto-replies, schedules and broadcasts skip them. Staff can add and remove entries. |
+| Scheduler | One-off or recurring (cron, IST) messages. |
+| Broadcasts | One message to many numbers, 10–30 s apart by default. Runs from the database, so it survives a restart. |
+| Webhooks | Events POSTed to other services, signed `X-Webhook-Signature: sha256=<hmac>`, with a delivery log. |
 
-[Features](#-key-features) • [User Guide](docs/USER_GUIDE.md) • [API Documentation](docs/API_DOCUMENTATION.md) • [Database Setup](docs/DATABASE_SETUP.md) • [Installation](#-quick-installation)
+## Who can call it
 
-</div>
+| Caller | How | Allowed |
+| --- | --- | --- |
+| Staff (CRM) | `Authorization: Bearer <fin_crm_app token>`, backed by an ACTIVE login | by permission, below |
+| Other fin_ services | `x-internal-key: INTERNAL_API_KEY` | everything |
+| Customers | – | nothing (403) |
 
----
+| Permission | Allows |
+| --- | --- |
+| `whatsapp_read` | numbers, chats, messages, contacts, groups, labels, media |
+| `whatsapp_send` | read + send, react, delete, mark read, labels, check numbers |
+| `whatsapp_admin` | send + manage numbers and settings, automations, opt-outs, schedules, broadcasts, webhooks, groups, blocking, deleting stored chats |
 
-## 📖 Complete Documentation
+`SUPER_ADMIN` has all three. The permissions come from the migration (module `WHATSAPP`).
 
-WA-AKG comes with extensive documentation designed for both developers and users.
+Responses use the usual `{ error, status, message, data }` envelope. `data` is encrypted unless the request sends `x-api-encrypt: false`. Media files (`/media/<name>`) are sent as they are.
 
-- **[Master Project Documentation](docs/PROJECT_DOCUMENTATION.md)**: Architecture, database, and logic flow.
-- **[API Documentation](docs/API_DOCUMENTATION.md)**: Comprehensive OpenAPI / Swagger guide for all **109+ endpoints**.
-- **[API Quick Reference](docs/API-QUICK-REFERENCE.md)**: Instantly jumpstart your integration with ready-to-use cURL/JavaScript snippets.
-- **[Environment Variables](docs/ENVIRONMENT_VARIABLES.md)**: Configuration and security guide.
+## API
 
----
+Every route except `/health`, `/check/*` and `/media/*` is under `/api/whatsapp/sessions`. `:session` is the number's `session_key`, for example `sales`.
 
-## 🌟 Why WA-AKG WhatsApp API Gateway?
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET, POST | `/sessions` | read, admin |
+| GET, PATCH, DELETE | `/sessions/:session` | read, admin, admin |
+| GET | `/sessions/:session/qr` | admin |
+| POST | `/sessions/:session/{start,stop,restart,logout,pairing-code}` | admin |
+| GET, PUT | `/sessions/:session/settings` | admin |
+| POST | `/sessions/:session/messages/{text,media,location,contact}` | send |
+| POST, DELETE | `/sessions/:session/messages/:keyId/react`, `/sessions/:session/messages/:keyId` | send |
+| GET | `/sessions/:session/chats`, `/chats/:jid/messages` | read |
+| POST | `/sessions/:session/chats/:jid/read` | send |
+| DELETE | `/sessions/:session/chats/:jid/stored` | admin |
+| GET, PUT | `/sessions/:session/chats/:jid/labels` | read, send |
+| CRUD | `/sessions/:session/labels` | read / send |
+| GET | `/sessions/:session/contacts`, `/contacts/:jid`, `/contacts/lid/:lid` | read |
+| POST | `/sessions/:session/contacts/check` | send |
+| POST | `/sessions/:session/contacts/:jid/{block,unblock}` | admin |
+| GET | `/sessions/:session/groups`, `/groups/:jid` | read |
+| POST, PATCH | groups: create, `join`, edit, `participants`, `invite-code`, `invite-code/revoke`, `leave` | admin |
+| CRUD | `/sessions/:session/{auto-replies,opt-outs,schedules,broadcasts,webhooks}` (+ `/opt-outs/:id/remove`, `/schedules/:id/cancel`, `/broadcasts/:id/cancel`, `/webhooks/:id/logs`, `/webhooks/:id/test`) | admin |
+| GET | `/media/:name` | read |
+| GET | `/health` (no auth), `/check/health`, `/check/ready` | – |
 
-WA-AKG transforms your WhatsApp into a fully programmable RESTful API. It's designed for scale, reliability, and ease of use, making it the perfect bridge between your business logic and WhatsApp's global reach. Excellent for developing a **WhatsApp Bot**, Automation, or Customer Service Gateway.
+**Recipients** (`to`): a phone number or a WhatsApp address. A 10-digit number gets `91`. Group addresses end in `@g.us`.
 
-### 🏗️ How it Works
+Sending a text from another service:
 
-```mermaid
-graph LR
-    User([User / App]) -->|REST API| API[WA-AKG Gateway]
-    API -->|Baileys| WhatsApp[[WhatsApp Server]]
-    API -->|Real-time| DB[(Prisma / DB)]
-    WhatsApp -.->|Webhook| API
-    API -.->|Event| Webhook([External CRM / API])
+```http
+POST /api/whatsapp/sessions/sales/messages/text
+x-internal-key: <INTERNAL_API_KEY>
+Content-Type: application/json
+
+{ "to": "9876543210", "text": "Your loan is approved", "reply_to": "<optional key id>" }
 ```
 
-### 🔥 Key Features
+The result is `{ key_id, jid }`. A 409 means the number isn't connected, or the recipient opted out.
 
-- **📱 Multi-Session Management**: Connect and manage unlimited WhatsApp accounts simultaneously via simple QR code scans.
-- **⚡ Pro WhatsApp Engine**: Powered by `@whiskeysockets/baileys` for high-speed, stable, and secure WebSocket connections.
-- **📅 Advanced Scheduler**: Precise message planning with **Media Support** (Images, Video, Docs).
-- **📢 Safe Broadcast**: Built-in anti-ban mechanisms with randomized delays (10-30s) and batch processing.
-- **🤖 Smart Auto-Reply**: Keywords matching with **Context Support** (Group/Private/All) and **Media Attachments**.
-- **🛡️ Granular Access Control**: Full **Whitelist** & **Blacklist** support for both Bot Commands and Auto Replies.
-- **🔗 Enterprise Webhooks**: Robust real-time event forwarding for messages, connections, status changes, and group updates.
-- **📇 Advanced Contacts**: Rich contact management with LID, verified names, and profile pictures.
-- **🎨 Creative Tools**: Built-in Sticker Maker with background removal (`remove.bg` integration).
-- **📘 Open API Spec**: Fully documented via `swagger-ui-react` at `/docs`.
+## Webhooks
 
-<details>
-<summary>📂 <b>View Webhook Payload Example</b></summary>
+The body is `{ event, sessionId, timestamp, data }`, where `sessionId` is the `session_key`. The events are:
 
-```json
-{
-  "event": "message.received",
-  "sessionId": "xgj7d9",
-  "timestamp": "2026-01-17T05:33:08.545Z",
-  "data": {
-    "key": { "remoteJid": "6287748687946@s.whatsapp.net", "fromMe": false, "id": "3EB0B78..." },
-    "from": "6287748687946@s.whatsapp.net",
-    "sender": "100429287395370@lid",
-    "remoteJidAlt": "100429287395370@lid",
-    "type": "TEXT",
-    "content": "saya sedang reply",
-    "isGroup": false,
-    "quoted": {
-      "type": "IMAGE",
-      "caption": "Ini caption dari reply",
-      "fileUrl": "/media/xgj7d9-A54FD0B6F..."
-    }
-  }
-}
+- `message.received` and `message.sent`
+- `message.status` (SENT, DELIVERED, READ)
+- `message.deleted` and `message.edited`
+- `contact.update`
+- `group.update` and `group.participants`
+- `opt_out`
+
+A webhook can subscribe to `["*"]` or to a list of these.
+
+To verify a delivery, compute HMAC-SHA256 of the raw body with the webhook's secret and compare it with `X-Webhook-Signature`.
+
+Webhook URLs must be public `https`. A fin_ service on the Docker network needs its host in `WHATSAPP_WEBHOOK_ALLOWED_HOSTS`.
+
+## Things to know
+
+- **One instance.** Each number has exactly one live connection. Running two containers against the same database would fight over the numbers, so the compose files run one.
+- **`WHATSAPP_ENCRYPTION_KEY`** encrypts the stored logins and webhook secrets. If it is lost or changed, every number has to be linked again.
+- **Media** is stored in `WHATSAPP_MEDIA_DIR`, a Docker volume on the servers. The database keeps only the file name.
+- **History:** when a number is linked, WhatsApp sends recent chats. They are stored without unread counts, webhooks or auto-replies. Full history: `WHATSAPP_SYNC_FULL_HISTORY=true`.
+
+## Fixed from WA-AKG
+
+| WA-AKG | Here |
+| --- | --- |
+| Two schedulers over the same rows: a message could go out twice | One job; rows claimed with `FOR UPDATE SKIP LOCKED` |
+| Delivery receipts read one step off (delivered showed as read) | Mapped from Baileys' status codes; status only moves forward |
+| Broadcasts in memory, lost on restart; 2 s between messages | In the database, resumed after a restart; 10–30 s apart |
+| STOP was logged, sending continued | Opt-out list enforced on every send path |
+| 4 queries per webhook event, one query per login key | Cached webhooks, batched login-key reads and writes |
+| Every history message processed one by one, with media downloads | Batched inserts, no downloads |
+| URL checks resolved DNS once and fetched again (DNS rebinding) | The checked address is the one connected to |
+| Socket.IO without auth, telemetry heartbeat | Removed |
+
+## Layout
+
 ```
-</details>
+config/options.ts            env (fails fast on missing keys)
+src/app.ts                   middleware, routes, boot, graceful shutdown
+src/controllers/             routes + permission guards
+src/schemas/                 AJV request schemas
+src/services/                API logic per area
+src/whatsapp/                Baileys: connection, manager, ingest, sender, automations, webhooks, auth state, media
+src/jobs/                    scheduler, broadcaster, webhook-log pruning
+src/helpers/                 jid, message parsing, encryption, safe fetch, pagination
+tests/                       unit, routes (supertest), *.db.spec.ts (Postgres)
+deploy/                      docker-compose.dev.yml (6109), docker-compose.prod.yml (5109)
+```
 
----
+## Run
 
-## 🧩 Integrations: Native n8n Support
-
-WA-AKG natively supports **n8n**! You can build complex, no-code/low-code WhatsApp automation workflows using our official community nodes.
-
-[![n8n nodes](https://img.shields.io/badge/n8n-nodes--wa--akg-EA4B71?style=for-the-badge&logo=n8n&logoColor=white)](https://www.npmjs.com/package/n8n-nodes-wa-akg)
-
-- **Action Node**: Full control over messaging, groups, sessions, contacts, and labels directly from your n8n workflows.
-- **Trigger Node**: Instantly catch real-time webhooks (Message Received, Group Joined, etc.) and trigger your workflows automatically.
-
-👉 **[View on npm (n8n-nodes-wa-akg)](https://www.npmjs.com/package/n8n-nodes-wa-akg)**
-
----
-
-## 🚀 Quick Installation
-
-### 1. Prerequisites
-- Node.js 20+ (Node.js 22 recommended)
-- MySQL or PostgreSQL
-- Git
-- PM2 (Installed globally: `npm install -g pm2`)
-
-### 2. Setup
 ```bash
-# Clone and install
-git clone https://github.com/mrifqidaffaaditya/WA-AKG.git
-cd WA-AKG
-npm install
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your DATABASE_URL, AUTH_SECRET, PORT, etc.
-
-# Push schema and generate Prisma Client
-npm run db:push
-
-# Create SuperAdmin account
-npm run make-admin admin@example.com password123
+npm ci && cp .env.example .env    # PUBLIC_KEY, RESPONSE_ENCRYPTION_KEY, WHATSAPP_ENCRYPTION_KEY
+npm run local
+npm test                          # database tests: TEST_DATABASE_URL=postgres://… npm test
 ```
 
-### 3. Run (Development)
-```bash
-npm run dev
-```
-
-### 4. Run (Production with PM2 - Recommended)
-We recommend deploying with **PM2** to run the app in the background and ensure it restarts automatically if the server rebooted or crashed.
-
-#### Option A: Automatic Setup Script (Easiest)
-We provide a built-in [start.sh](file:///home/aditya/project/WA-AKG/start.sh) script that automates everything: checking the configuration, installing dependencies, syncing the database schema, compiling production assets, and starting or reloading PM2:
-```bash
-./start.sh
-```
-
-#### Option B: Manual Setup
-1. **Build the application**:
-   ```bash
-   npm run build
-   ```
-
-2. **Start with PM2**:
-   Using the built-in [ecosystem.config.js](file:///home/aditya/project/WA-AKG/ecosystem.config.js) configuration file:
-   ```bash
-   pm2 start ecosystem.config.js
-   ```
-
-3. **Manage the process**:
-   - View status: `pm2 status`
-   - View logs: `pm2 logs wa-akg`
-   - Stop process: `pm2 stop wa-akg`
-   - Restart process: `pm2 restart wa-akg`
-
-4. **Enable auto-start on server boot**:
-   ```bash
-   pm2 startup
-   # Copy-paste the command outputted by the command above
-   pm2 save
-   ```
-
----
-
-### 🐋 Alternative: Docker Deployment
-Although **PM2 is highly recommended**, you can also deploy using Docker Compose:
-
-1. **Prepare Environment**:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` — set `DATABASE_URL` (points to the MySQL container), `AUTH_SECRET`, and other branding settings.
-
-2. **Start Services**:
-   ```bash
-   docker compose up -d
-   ```
-   This spins up the MySQL database container alongside the Next.js gateway application.
-
----
-
-## 📚 API Reference Overview
-
-WA-AKG provides a comprehensive REST API to integrate WhatsApp Messaging directly into your applications. Full details in [API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md).
-
-> [!TIP]
-> Use the built-in **Swagger UI** for interactive exploration at `/docs`.
-
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/messages/{sessionId}/{jid}/send` | Send text, media, or stickers |
-| `POST` | `/api/messages/{sessionId}/broadcast` | Scalable bulk messaging |
-| `PATCH` | `/api/sessions/{id}/settings` | Update session configuration |
-| `GET` | `/api/groups/{sessionId}` | List all available groups |
-| `POST` | `/api/webhooks/{sessionId}` | Register real-time event listeners |
-| `POST` | `/api/autoreplies/{sessionId}` | Create context-aware auto-replies |
-| `POST` | `/api/auth/register` | Register new users via the web securely |
-
-### Example: Send Text Message
-```bash
-curl -X POST http://localhost:3000/api/messages/session_01/62812345678@s.whatsapp.net/send \
-  -H "X-API-Key: your_api_key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": { "text": "Hello from WA-AKG!" }
-  }'
-```
-
----
-
-## ⚠️ Known Issues / Caveats
-
-> [!WARNING]
-> **Status Update Feature (POST `/api/status/update`)**
-> 
-> The WhatsApp status/story update feature is currently **experiencing known issues** and should be avoided in production:
-> - Text statuses with custom background colors may not display correctly
-> - Media statuses (images/videos) may fail to upload to WhatsApp servers
-> - The feature is under active development
-> 
-> We recommend waiting for the next release before using this endpoint in critical workflows.
-
----
-
-## 🛡️ Security
-- **API Key Auth**: Secured endpoints using `X-API-Key` header.
-- **RBAC**: Multi-role support (`SUPERADMIN`, `OWNER`, `STAFF`).
-- **Encrypted Passwords**: All passwords hashed with bcrypt.
-- **JWT Encryption**: Session tokens signed with `AUTH_SECRET` (wajib diisi — tidak ada fallback).
-- **Input Validation**: Zod schemas on critical endpoints.
-- **Media Protection**: Path traversal prevention, session-scoped media access.
-
----
-
-<div align="center">
-  Built with ❤️ by <a href="https://github.com/mrifqidaffaaditya">Aditya</a>  
-  Licensed under <a href="LICENSE">MIT</a>
-</div>
+The database must have the `fin_migrations` migrations applied. In the platform, run `docker compose up -d fin_whatsapp`.

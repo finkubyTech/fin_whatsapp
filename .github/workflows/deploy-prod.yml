@@ -1,0 +1,124 @@
+name: Deploy to Production
+
+on:
+  pull_request:
+    branches:
+      - production
+    types:
+      - closed
+
+concurrency:
+  group: deploy-prod-${{ github.event.repository.name }}
+  cancel-in-progress: false
+
+# Runs only when a PR is merged into production (a direct push does not deploy).
+# The prod container settings (host port, env file, network) live in
+# deploy/docker-compose.prod.yml; a repo without that file is not deployed
+# to prod (fin_credit_mock has no prod file).
+# The other environment has its own workflow: deploy-dev.yml.
+env:
+  ENV_NAME: prod
+  REPO_NAME: ${{ github.event.repository.name }}
+
+jobs:
+  setup:
+    name: Check compose file
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.compose.outputs.deploy }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Look for deploy/docker-compose.<env>.yml
+        id: compose
+        run: |
+          if [ -f "deploy/docker-compose.${ENV_NAME}.yml" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No deploy/docker-compose.${ENV_NAME}.yml: ${REPO_NAME} is not deployed to ${ENV_NAME}."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-push:
+    name: Build and Push Docker Image
+    needs: setup
+    if: needs.setup.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Azure Container Registry (ACR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_USERNAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            REACT_APP_ENC_KEY=${{ secrets.RESPONSE_ENCRYPTION_KEY || 'Cpa3npiP2G9bU4AaagAaWSqBvZVGLcXp' }}
+            REACT_APP_APP_BASE_URL=https://dashboard.finkuby.com
+            REACT_APP_DEVELOPMENT=false
+            VITE_ENC_KEY=${{ secrets.RESPONSE_ENCRYPTION_KEY || 'Cpa3npiP2G9bU4AaagAaWSqBvZVGLcXp' }}
+            VITE_API_BASE_URL=/api/crm
+          tags: |
+            ${{ secrets.ACR_USERNAME }}.azurecr.io/${{ env.REPO_NAME }}:${{ env.ENV_NAME }}-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-to-vm:
+    name: Deploy to VM
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Copy compose file to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          password: ${{ secrets.VM_PASSWORD }}
+          source: deploy/docker-compose.${{ env.ENV_NAME }}.yml
+          target: /opt/apps/${{ env.ENV_NAME }}/${{ env.REPO_NAME }}
+          strip_components: 1
+          overwrite: true
+
+      - name: Deploy to VM via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          password: ${{ secrets.VM_PASSWORD }}
+          script: |
+            set -e
+            ENV_NAME="${{ env.ENV_NAME }}"
+            REPO_NAME="${{ env.REPO_NAME }}"
+            export IMAGE="${{ secrets.ACR_USERNAME }}.azurecr.io/${REPO_NAME}:${ENV_NAME}-latest"
+            COMPOSE_FILE="/opt/apps/${ENV_NAME}/${REPO_NAME}/docker-compose.${ENV_NAME}.yml"
+
+            echo "Logging in to ACR on VM..."
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_USERNAME }}.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
+
+            echo "Pulling latest image: $IMAGE"
+            docker compose -f "$COMPOSE_FILE" pull
+
+            # Free the name if the container was started by the old `docker run` deploy.
+            docker rm -f "${REPO_NAME}-${ENV_NAME}" 2>/dev/null || true
+            docker compose -f "$COMPOSE_FILE" up -d
+
+            docker image prune -f
+            echo "Deployment to $ENV_NAME completed successfully!"
