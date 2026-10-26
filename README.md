@@ -94,7 +94,7 @@ A webhook can subscribe to `["*"]` or to a list of these.
 
 To verify a delivery, compute HMAC-SHA256 of the raw body with the webhook's secret and compare it with `X-Webhook-Signature`.
 
-Webhook URLs must be public `https`. A fin_ service on the Docker network needs its host in `WHATSAPP_WEBHOOK_ALLOWED_HOSTS`.
+Webhook URLs must be public `https`. A fin_ service on the Docker network needs its host in `WHATSAPP_WEBHOOK_ALLOWED_HOSTS`: the deploy files allow `fin_rm_inbox-dev` / `fin_rm_inbox-prod`, whose webhook fin_rm_inbox registers itself.
 
 ## Things to know
 

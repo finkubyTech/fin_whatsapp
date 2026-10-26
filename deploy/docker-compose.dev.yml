@@ -18,6 +18,8 @@ services:
     environment:
       DB_SSL: "false"                # Postgres on this server has no SSL
       PORT: 5109                     # port inside the container
+      # fin_rm_inbox's webhook comes over the docker network (http, a private address)
+      WHATSAPP_WEBHOOK_ALLOWED_HOSTS: fin_rm_inbox-dev
     ports:
       # host (localhost only, so traffic goes through nginx) : container
       - "127.0.0.1:6109:5109"
