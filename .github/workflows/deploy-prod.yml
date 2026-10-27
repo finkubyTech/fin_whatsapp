@@ -76,7 +76,7 @@ jobs:
           tags: |
             ${{ secrets.ACR_USERNAME }}.azurecr.io/${{ env.REPO_NAME }}:${{ env.ENV_NAME }}-latest
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true   # a cache hiccup must not block the deploy
 
   deploy-to-vm:
     name: Deploy to VM
