@@ -214,9 +214,21 @@ describeDb("WhatsApp gateway (Postgres)", () => {
             expect(sent[0].options.quoted.key.id).toBe(message.key.id);
         });
 
-        it("STOP opts the customer out: no reply now, nothing sent later", async () => {
+        it("STOP opts the customer out: the matching rule's acknowledgement once, nothing sent later", async () => {
+            await db("wa_auto_replies").insert({
+                session_id: session.id,
+                keyword: "stop",
+                match_type: "EXACT",
+                response: "Understood, we've noted your request.",
+            });
+            invalidateAutoReplies(session.id);
             await ingestLive(ctx, [incoming("STOP") as any], "notify");
-            expect(sent).toHaveLength(0);
+            expect(sent.map((s) => s.content)).toEqual([
+                { text: "Understood, we've noted your request." },
+            ]);
+            sent.length = 0;
+            await ingestLive(ctx, [incoming("stop") as any], "notify");
+            expect(sent).toHaveLength(0); // already opted out: no second acknowledgement
             expect(
                 await db("wa_opt_outs")
                     .where({ session_id: session.id, jid: CUSTOMER })

@@ -151,6 +151,19 @@ export async function onIncoming(ctx: IncomingContext): Promise<void> {
 
     const text = content.type === "TEXT" ? content.text : "";
     if (!isGroup && text && OPT_OUT_PATTERN.test(text)) {
+        if (await isOptedOut(session.id, chatJid)) return;
+        // The one reply an opting-out customer gets: an auto-reply rule that matches the STOP message itself
+        // (e.g. "Understood, we've noted your request."), sent once, before the opt-out blocks every send.
+        const ack = canAutoReply(settings, ctx.senderJid)
+            ? await findRule(session.id, text, false)
+            : null;
+        if (ack) {
+            await sendRule(session, chatJid, ack, ctx.message).catch((err: any) =>
+                logger.warn(
+                    `[automations] opt-out acknowledgement to ${maskJid(chatJid)} failed: ${err?.message}`
+                )
+            );
+        }
         if (await recordOptOut(session.id, chatJid, text.trim(), "KEYWORD")) {
             logger.info(`[automations] ${maskJid(chatJid)} opted out on ${session.session_key}`);
             dispatch(session, "opt_out", { jid: chatJid, message: text.trim(), source: "KEYWORD" });
