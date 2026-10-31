@@ -1,0 +1,41 @@
+# prod: fin_whatsapp-prod on prod-network, on host port 5109 (nginx proxies to it).
+#
+# Change the host port (left of the colon) or the env file here. The deploy
+# workflow (.github/workflows/deploy-prod.yml) copies this file to
+# /opt/apps/prod/fin_whatsapp/ on the VM and runs it. By hand on the VM:
+#   IMAGE=<registry>.azurecr.io/fin_whatsapp:prod-latest docker compose -f docker-compose.prod.yml up -d
+#
+# Exactly one container: a WhatsApp login can only be connected from one
+# place, so never scale this service.
+name: fin_whatsapp-prod
+
+services:
+  fin_whatsapp:
+    image: ${IMAGE:?IMAGE is set by the deploy workflow}
+    container_name: fin_whatsapp-prod
+    restart: always
+    env_file: /opt/apps/prod/.env
+    environment:
+      DB_SSL: "false"                # Postgres on this server has no SSL
+      PORT: 5109                     # port inside the container
+      # fin_rm_inbox's webhook comes over the docker network (http, a private address)
+      WHATSAPP_WEBHOOK_ALLOWED_HOSTS: fin_rm_inbox-prod
+    ports:
+      # host (localhost only, so traffic goes through nginx) : container
+      - "127.0.0.1:5109:5109"
+    volumes:
+      - whatsapp_media:/usr/src/app/data/media
+    stop_grace_period: 20s           # time to close the WhatsApp sockets cleanly
+    networks: [prod-network]
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+
+volumes:
+  whatsapp_media:
+
+networks:
+  prod-network:
+    external: true
