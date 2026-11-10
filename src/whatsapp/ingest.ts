@@ -77,7 +77,7 @@ export async function phoneJidFor(
 
     const contact = await connection("wa_contacts")
         .where({ session_id: ctx.session.id })
-        .andWhere((q) => q.where({ jid: plain }).orWhere({ lid: plain }))
+        .andWhere((q: any) => q.where({ jid: plain }).orWhere({ lid: plain }))
         .whereNotNull("phone_jid")
         .first("phone_jid");
     let phone: string | null = contact?.phone_jid ?? null;
